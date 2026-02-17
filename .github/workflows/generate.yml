@@ -44,7 +44,7 @@ jobs:
 
       - name: Generate GeoSite file
         run: |
-          xray-geodata-cut -type geosite -in data/geosite.dat -out release/geosite.dat -keep "ru-blocked,category-ru,category-gov-ru"
+          xray-geodata-cut -type geosite -in data/geosite.dat -out release/geosite.dat -keep "private,ru-blocked,category-ru,category-gov-ru"
 
       - name: Generate GeoIP file
         run: |
