@@ -3,7 +3,7 @@ name: Generate Geo Files
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/30 * * * *'  # Каждые 30 минут
 
 jobs:
   generate:
@@ -92,8 +92,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
-          tag_name: v${{ github.run_number }}
-          name: Release ${{ github.run_number }}
+          tag_name: latest  # Постоянный тег 'latest'
+          name: Latest Release  # Название релиза
           body_path: release/note.md
           token: ${{ secrets.DATFILTER }}
           fail_on_unmatched_files: true
+          overwrite: true  # Перезаписывать при каждом запуске
