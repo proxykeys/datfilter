@@ -3,7 +3,7 @@ name: Generate Geo Files
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'  # Каждые 30 минут
+    - cron: '0 */6 * * *'
 
 jobs:
   generate:
