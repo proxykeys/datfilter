@@ -1,0 +1,105 @@
+name: Generate Geo Files
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
+
+jobs:
+  generate:
+    name: Generate optimized geo files
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Download source files
+        env:
+          GEOSITE_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat
+          GEOIP_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat
+          SHA256_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sha256sum.txt
+        run: |
+          mkdir -p data release
+          echo "Downloading geosite.dat..."
+          curl -sSL -o data/geosite.dat "${GEOSITE_URL}"
+          echo "Downloading geoip.dat..."
+          curl -sSL -o data/geoip.dat "${GEOIP_URL}"
+          echo "Downloading sha256sum.txt..."
+          curl -sSL -o data/sha256sum.txt "${SHA256_URL}"
+
+      - name: Verify checksums
+        run: |
+          cd data
+          sha256sum -c sha256sum.txt || echo "⚠️ Checksum warning!"
+
+      - name: Install xray-geodata-cut
+        run: go install github.com/yichya/xray-geodata-cut@latest
+
+      - name: Generate GeoSite file
+        run: |
+          xray-geodata-cut -type geosite -in data/geosite.dat -out release/geosite.dat -keep "private,ru-blocked,re-filter,category-ru,category-gov-ru"
+
+      - name: Generate GeoIP file
+        run: |
+          xray-geodata-cut -type geoip -in data/geoip.dat -out release/geoip.dat -keep "private,re-filter,ru" -trimipv6
+
+      - name: Create checksums
+        run: |
+          cd release
+          sha256sum geosite.dat > sha256sum.txt
+          sha256sum geoip.dat >> sha256sum.txt
+
+      - name: Display file sizes
+        run: |
+          echo "=== Generated Files ==="
+          ls -lh release/
+          echo ""
+          echo "=== Size comparison ==="
+          du -h data/geosite.dat data/geoip.dat release/geosite.dat release/geoip.dat
+
+      - name: Create release note
+        run: |
+          cat > release/note.md << 'EOF'
+          # DatFilter Geo Files
+          
+          Оптимизированные для iOS Xray-core геолокационные файлы.
+          
+          ## Включённые категории
+          
+          ### GeoSite
+          - `private` - частные сети
+          - `ru-blocked` - заблокированные в России домены
+          - `re-filter` - фильтр re:filter
+          - `category-ru` - российские домены
+          - `category-gov-ru` - российские государственные домены
+          
+          ### GeoIP
+          - `private` - частные IP-адреса
+          - `ru` - российские IP-адреса
+          - `re-filter` - IP из списка re:filter
+          
+          ## Исключено
+          - Рекламные списки (`category-ads-all`) для экономии памяти
+          - IPv6 диапазоны
+          
+          ## Источник
+          Базовые файлы: [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat)
+          Обрезка: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          tag_name: v${{ github.run_number }}
+          name: Release ${{ github.run_number }}
+          body_path: release/note.md
+          token: ${{ secrets.DATFILTER }}
+          fail_on_unmatched_files: true
