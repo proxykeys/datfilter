@@ -44,7 +44,7 @@ jobs:
 
       - name: Generate GeoSite file
         run: |
-          xray-geodata-cut -type geosite -in data/geosite.dat -out release/geosite.dat -keep "private,ru-blocked,re-filter,category-ru,category-gov-ru"
+          xray-geodata-cut -type geosite -in data/geosite.dat -out release/geosite.dat -keep "ru-blocked,category-ru,category-gov-ru"
 
       - name: Generate GeoIP file
         run: |
@@ -84,10 +84,6 @@ jobs:
           - `private` - частные IP-адреса
           - `ru` - российские IP-адреса
           - `re-filter` - IP из списка re:filter
-          
-          ## Исключено
-          - Рекламные списки (`category-ads-all`) для экономии памяти
-          - IPv6 диапазоны
           
           ## Источник
           Базовые файлы: [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat)
