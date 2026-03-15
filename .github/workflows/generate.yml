@@ -44,10 +44,14 @@ jobs:
           echo "Downloading geoip.dat..."
           curl -fsSL -o data/geoip.dat "${GEOIP_URL}"
 
-          echo "Downloading sha256sum.txt..."
-          curl -fsSL -o data/sha256sum.txt "${SHA256_URL}"
-
-          grep ' geoip.dat$' data/sha256sum.txt > data/geoip.sha256sum || true
+          echo "Trying to download sha256sum.txt..."
+          if curl -fsSL -o data/sha256sum.txt "${SHA256_URL}"; then
+            grep ' geoip.dat$' data/sha256sum.txt > data/geoip.sha256sum || true
+            echo "Checksum file downloaded"
+          else
+            echo "⚠️ sha256sum.txt not found, skipping checksum download"
+            rm -f data/sha256sum.txt data/geoip.sha256sum
+          fi
 
           echo "Downloaded files:"
           ls -lh data/
@@ -58,7 +62,7 @@ jobs:
           if [ -s geoip.sha256sum ]; then
             sha256sum -c geoip.sha256sum
           else
-            echo "⚠️ geoip.dat checksum line not found, skipping verification"
+            echo "⚠️ geoip checksum not available, skipping verification"
           fi
 
       - name: Install xray-geodata-cut
