@@ -70,19 +70,19 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install github.com/yichya/xray-geodata-cut@latest
 
-      - name: Clone GeoSite source repositories
+      - name: Clone domain-list-community
         run: |
           git clone --depth=1 https://github.com/v2fly/domain-list-community.git work/domain-list-community
-          git clone --depth=1 https://github.com/runetfreedom/russia-blocked-geosite.git work/russia-blocked-geosite
 
-      - name: Prepare GeoSite source data
+      - name: Inject custom GeoSite categories
         env:
+          RU_BLOCKED_URL: https://raw.githubusercontent.com/runetfreedom/russia-blocked-geosite/release/ru-blocked.txt
           RU_NON_RU_URL: https://raw.githubusercontent.com/proxykeys/filter/main/ru-non-ru-domains.txt
         run: |
-          rm -rf work/domain-list-community/data
-          cp -R work/russia-blocked-geosite/data work/domain-list-community/data
+          echo "Downloading ru-blocked source..."
+          curl -fsSL -o work/domain-list-community/data/ru-blocked "${RU_BLOCKED_URL}"
 
-          echo "Downloading custom list from proxykeys/filter..."
+          echo "Downloading ru-non-ru-domains source..."
           curl -fsSL -o work/ru-non-ru-domains.txt "${RU_NON_RU_URL}"
 
           echo "Building category-ru-non-ru source file..."
@@ -124,6 +124,9 @@ jobs:
           print(f"Generated {dst} with {len(out)} records")
           PY
 
+          echo "Preview of ru-blocked:"
+          head -20 work/domain-list-community/data/ru-blocked || true
+          echo ""
           echo "Preview of category-ru-non-ru:"
           head -20 work/domain-list-community/data/category-ru-non-ru || true
 
@@ -188,9 +191,9 @@ jobs:
           
           ## Источники
           - GeoIP база: [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat)
-          - GeoSite source data: [runetfreedom/russia-blocked-geosite](https://github.com/runetfreedom/russia-blocked-geosite)
-          - Custom category source: [proxykeys/filter](https://github.com/proxykeys/filter)
-          - GeoSite builder: [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)
+          - GeoSite base: [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)
+          - `ru-blocked`: [runetfreedom/russia-blocked-geosite](https://github.com/runetfreedom/russia-blocked-geosite)
+          - `category-ru-non-ru`: [proxykeys/filter](https://github.com/proxykeys/filter)
           - Обрезка итоговых файлов: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
           EOF
 
