@@ -2,14 +2,26 @@ name: Generate Geo Files
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/generate.yml'
   schedule:
     - cron: '0 */6 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: datfilter-generate
+  cancel-in-progress: true
 
 jobs:
   generate:
     name: Generate optimized geo files
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,35 +32,117 @@ jobs:
           go-version: '1.23'
           cache: true
 
-      - name: Download source files
+      - name: Prepare directories
+        run: |
+          mkdir -p data release work
+
+      - name: Download source GeoIP files
         env:
-          GEOSITE_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat
           GEOIP_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat
           SHA256_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sha256sum.txt
         run: |
-          mkdir -p data release
-          echo "Downloading geosite.dat..."
-          curl -sSL -o data/geosite.dat "${GEOSITE_URL}"
           echo "Downloading geoip.dat..."
-          curl -sSL -o data/geoip.dat "${GEOIP_URL}"
-          echo "Downloading sha256sum.txt..."
-          curl -sSL -o data/sha256sum.txt "${SHA256_URL}"
+          curl -fsSL -o data/geoip.dat "${GEOIP_URL}"
 
-      - name: Verify checksums
+          echo "Downloading sha256sum.txt..."
+          curl -fsSL -o data/sha256sum.txt "${SHA256_URL}"
+
+          grep ' geoip.dat$' data/sha256sum.txt > data/geoip.sha256sum || true
+
+      - name: Verify GeoIP checksum
         run: |
           cd data
-          sha256sum -c sha256sum.txt || echo "⚠️ Checksum warning!"
+          if [ -s geoip.sha256sum ]; then
+            sha256sum -c geoip.sha256sum
+          else
+            echo "⚠️ geoip.dat checksum line not found, skipping verification"
+          fi
 
       - name: Install xray-geodata-cut
-        run: go install github.com/yichya/xray-geodata-cut@latest
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install github.com/yichya/xray-geodata-cut@latest
+
+      - name: Clone GeoSite source repositories
+        run: |
+          git clone --depth=1 https://github.com/v2fly/domain-list-community.git work/domain-list-community
+          git clone --depth=1 https://github.com/runetfreedom/russia-blocked-geosite.git work/russia-blocked-geosite
+
+      - name: Prepare GeoSite source data
+        env:
+          RU_NON_RU_URL: https://raw.githubusercontent.com/proxykeys/filter/main/ru-non-ru-domains.txt
+        run: |
+          rm -rf work/domain-list-community/data
+          cp -R work/russia-blocked-geosite/data work/domain-list-community/data
+
+          echo "Downloading custom list from proxykeys/filter..."
+          curl -fsSL -o work/ru-non-ru-domains.txt "${RU_NON_RU_URL}"
+
+          echo "Building category-ru-non-ru source file..."
+          python3 - << 'PY'
+          import pathlib
+          import re
+
+          src = pathlib.Path("work/ru-non-ru-domains.txt")
+          dst = pathlib.Path("work/domain-list-community/data/category-ru-non-ru")
+
+          domain_re = re.compile(
+              r"^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$"
+          )
+
+          seen = set()
+          out = []
+
+          for lineno, raw in enumerate(src.read_text(encoding="utf-8").splitlines(), start=1):
+              line = raw.strip()
+              if not line or line.startswith("#"):
+                  continue
+
+              if line.startswith("full:"):
+                  value = line[5:].strip().lower().rstrip(".")
+                  if not domain_re.match(value):
+                      raise SystemExit(f"Invalid full domain at line {lineno}: {raw}")
+                  record = f"full:{value}"
+              else:
+                  value = line.lower().rstrip(".")
+                  if not domain_re.match(value):
+                      raise SystemExit(f"Invalid domain suffix at line {lineno}: {raw}")
+                  record = f"domain:{value}"
+
+              if record not in seen:
+                  seen.add(record)
+                  out.append(record)
+
+          dst.write_text("\n".join(out) + ("\n" if out else ""), encoding="utf-8")
+          print(f"Generated {dst} with {len(out)} records")
+          PY
+
+          echo "Preview of category-ru-non-ru:"
+          head -20 work/domain-list-community/data/category-ru-non-ru || true
+
+      - name: Build full GeoSite database
+        run: |
+          cd work/domain-list-community
+          go mod download
+          go run ./
+          mv dlc.dat ../geosite-full.dat
 
       - name: Generate GeoSite file
         run: |
-          xray-geodata-cut -type geosite -in data/geosite.dat -out release/geosite.dat -keep "private,ru-blocked,category-ru,category-gov-ru"
+          xray-geodata-cut \
+            -type geosite \
+            -in work/geosite-full.dat \
+            -out release/geosite.dat \
+            -keep "private,ru-blocked,category-ru,category-gov-ru,category-ru-non-ru"
 
       - name: Generate GeoIP file
         run: |
-          xray-geodata-cut -type geoip -in data/geoip.dat -out release/geoip.dat -keep "private,re-filter,ru" -trimipv6
+          xray-geodata-cut \
+            -type geoip \
+            -in data/geoip.dat \
+            -out release/geoip.dat \
+            -keep "private,re-filter,ru" \
+            -trimipv6
 
       - name: Create checksums
         run: |
@@ -62,40 +156,47 @@ jobs:
           ls -lh release/
           echo ""
           echo "=== Size comparison ==="
-          du -h data/geosite.dat data/geoip.dat release/geosite.dat release/geoip.dat
+          du -h data/geoip.dat work/geosite-full.dat release/geosite.dat release/geoip.dat
 
       - name: Create release note
         run: |
           cat > release/note.md << 'EOF'
           # DatFilter Geo Files
           
-          Оптимизированные для iOS Xray-core геолокационные файлы.
+          Оптимизированные GeoSite / GeoIP файлы для Xray-core и совместимых клиентов.
           
           ## Включённые категории
           
           ### GeoSite
-          - `private` - частные сети
+          - `private` - частные сети и локальные домены
           - `ru-blocked` - заблокированные в России домены
           - `category-ru` - российские домены
           - `category-gov-ru` - российские государственные домены
+          - `category-ru-non-ru` - российские сервисы вне `.ru/.su/.рф`, поддерживаемые вручную
           
           ### GeoIP
           - `private` - частные IP-адреса
           - `ru` - российские IP-адреса
-          - `re-filter` - IP из списка re:filter
+          - `re-filter` - IP из re:filter
           
-          ## Источник
-          Базовые файлы: [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat)
-          Обрезка: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
+          ## Источники
+          - GeoIP база: [runetfreedom/russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat)
+          - GeoSite source data: [runetfreedom/russia-blocked-geosite](https://github.com/runetfreedom/russia-blocked-geosite)
+          - Custom category source: [proxykeys/filter](https://github.com/proxykeys/filter)
+          - GeoSite builder: [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)
+          - Обрезка итоговых файлов: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
           EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
-          tag_name: latest  # Постоянный тег 'latest'
-          name: Latest Release  # Название релиза
+          files: |
+            release/geosite.dat
+            release/geoip.dat
+            release/sha256sum.txt
+          tag_name: latest
+          name: Latest Release
           body_path: release/note.md
           token: ${{ secrets.DATFILTER }}
           fail_on_unmatched_files: true
-          overwrite: true  # Перезаписывать при каждом запуске
+          overwrite_files: true
