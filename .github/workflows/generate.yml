@@ -49,6 +49,9 @@ jobs:
 
           grep ' geoip.dat$' data/sha256sum.txt > data/geoip.sha256sum || true
 
+          echo "Downloaded files:"
+          ls -lh data/
+
       - name: Verify GeoIP checksum
         run: |
           cd data
