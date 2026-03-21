@@ -239,16 +239,28 @@ jobs:
           - Обрезка итоговых файлов: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
           EOF
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/geosite.dat
-            release/geoip.dat
-            release/sha256sum.txt
-          tag_name: latest
-          name: Latest Release
-          body_path: release/note.md
-          token: ${{ secrets.DATFILTER }}
-          fail_on_unmatched_files: true
-          overwrite_files: true
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.DATFILTER }}
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            echo "Release 'latest' exists -> updating"
+            gh release edit latest \
+              --title "Latest Release" \
+              --notes-file release/note.md
+
+            gh release upload latest \
+              release/geosite.dat \
+              release/geoip.dat \
+              release/sha256sum.txt \
+              --clobber
+          else
+            echo "Release 'latest' does not exist -> creating"
+            gh release create latest \
+              release/geosite.dat \
+              release/geoip.dat \
+              release/sha256sum.txt \
+              --title "Latest Release" \
+              --notes-file release/note.md \
+              --target "${GITHUB_SHA}"
+          fi
