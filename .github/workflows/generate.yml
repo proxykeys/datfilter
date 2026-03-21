@@ -8,7 +8,7 @@ on:
     paths:
       - '.github/workflows/generate.yml'
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '20 */6 * * *'
 
 permissions:
   contents: write
@@ -21,19 +21,21 @@ jobs:
   generate:
     name: Generate optimized geo files
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.23'
-          cache: true
+          cache: false
 
       - name: Prepare directories
         run: |
+          rm -rf data release work
           mkdir -p data release work
 
       - name: Download source GeoIP files
@@ -42,10 +44,10 @@ jobs:
           SHA256_URL: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sha256sum.txt
         run: |
           echo "Downloading geoip.dat..."
-          curl -fsSL -o data/geoip.dat "${GEOIP_URL}"
+          curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL -o data/geoip.dat "${GEOIP_URL}"
 
           echo "Trying to download sha256sum.txt..."
-          if curl -fsSL -o data/sha256sum.txt "${SHA256_URL}"; then
+          if curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL -o data/sha256sum.txt "${SHA256_URL}"; then
             grep ' geoip.dat$' data/sha256sum.txt > data/geoip.sha256sum || true
             echo "Checksum file downloaded"
           else
@@ -78,57 +80,93 @@ jobs:
         env:
           RU_BLOCKED_URL: https://raw.githubusercontent.com/runetfreedom/russia-blocked-geosite/release/ru-blocked.txt
           RU_NON_RU_URL: https://raw.githubusercontent.com/proxykeys/filter/main/ru-non-ru-domains.txt
+          RU_ADS_URL: https://raw.githubusercontent.com/proxykeys/filter/main/release/canonical-ru-ads.txt
         run: |
           echo "Downloading ru-blocked source..."
-          curl -fsSL -o work/domain-list-community/data/ru-blocked "${RU_BLOCKED_URL}"
+          curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL -o work/domain-list-community/data/ru-blocked "${RU_BLOCKED_URL}"
 
           echo "Downloading ru-non-ru-domains source..."
-          curl -fsSL -o work/ru-non-ru-domains.txt "${RU_NON_RU_URL}"
+          curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL -o work/ru-non-ru-domains.txt "${RU_NON_RU_URL}"
 
-          echo "Building category-ru-non-ru source file..."
+          echo "Downloading canonical-ru-ads source..."
+          curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL -o work/canonical-ru-ads.txt "${RU_ADS_URL}"
+
+          test -s work/ru-non-ru-domains.txt
+          test -s work/canonical-ru-ads.txt
+
+          echo "Building category-ru-non-ru and category-ads-ru source files..."
           python3 - << 'PY'
           import pathlib
           import re
-
-          src = pathlib.Path("work/ru-non-ru-domains.txt")
-          dst = pathlib.Path("work/domain-list-community/data/category-ru-non-ru")
 
           domain_re = re.compile(
               r"^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$"
           )
 
-          seen = set()
-          out = []
+          def build_category(src_path: str, dst_path: str, source_name: str):
+              src = pathlib.Path(src_path)
+              dst = pathlib.Path(dst_path)
 
-          for lineno, raw in enumerate(src.read_text(encoding="utf-8").splitlines(), start=1):
-              line = raw.strip()
-              if not line or line.startswith("#"):
-                  continue
+              seen = set()
+              out = []
 
-              if line.startswith("full:"):
-                  value = line[5:].strip().lower().rstrip(".")
+              for lineno, raw in enumerate(src.read_text(encoding="utf-8").splitlines(), start=1):
+                  line = raw.strip()
+                  if not line or line.startswith("#"):
+                      continue
+
+                  if "#" in line and not line.startswith("regexp:"):
+                      line = line.split("#", 1)[0].strip()
+                      if not line:
+                          continue
+
+                  if line.startswith("keyword:") or line.startswith("regexp:"):
+                      raise SystemExit(f"Unsupported record in {source_name} at line {lineno}: {raw}")
+
+                  if line.startswith("domain:"):
+                      value = line[7:].strip().lower().rstrip(".")
+                      record_type = "domain"
+                  elif line.startswith("full:"):
+                      value = line[5:].strip().lower().rstrip(".")
+                      record_type = "full"
+                  else:
+                      value = line.lower().rstrip(".")
+                      record_type = "domain"
+
                   if not domain_re.match(value):
-                      raise SystemExit(f"Invalid full domain at line {lineno}: {raw}")
-                  record = f"full:{value}"
-              else:
-                  value = line.lower().rstrip(".")
-                  if not domain_re.match(value):
-                      raise SystemExit(f"Invalid domain suffix at line {lineno}: {raw}")
-                  record = f"domain:{value}"
+                      raise SystemExit(f"Invalid domain in {source_name} at line {lineno}: {raw}")
 
-              if record not in seen:
-                  seen.add(record)
-                  out.append(record)
+                  record = f"{record_type}:{value}"
+                  if record not in seen:
+                      seen.add(record)
+                      out.append(record)
 
-          dst.write_text("\n".join(out) + ("\n" if out else ""), encoding="utf-8")
-          print(f"Generated {dst} with {len(out)} records")
+              dst.write_text("\n".join(out) + ("\n" if out else ""), encoding="utf-8")
+              print(f"Generated {dst} with {len(out)} records")
+
+          build_category(
+              "work/ru-non-ru-domains.txt",
+              "work/domain-list-community/data/category-ru-non-ru",
+              "ru-non-ru-domains.txt"
+          )
+
+          build_category(
+              "work/canonical-ru-ads.txt",
+              "work/domain-list-community/data/category-ads-ru",
+              "canonical-ru-ads.txt"
+          )
           PY
 
           echo "Preview of ru-blocked:"
           head -20 work/domain-list-community/data/ru-blocked || true
           echo ""
+
           echo "Preview of category-ru-non-ru:"
           head -20 work/domain-list-community/data/category-ru-non-ru || true
+          echo ""
+
+          echo "Preview of category-ads-ru:"
+          head -20 work/domain-list-community/data/category-ads-ru || true
 
       - name: Build full GeoSite database
         run: |
@@ -143,7 +181,7 @@ jobs:
             -type geosite \
             -in work/geosite-full.dat \
             -out release/geosite.dat \
-            -keep "private,ru-blocked,category-ru,category-gov-ru,category-ru-non-ru"
+            -keep "private,ru-blocked,category-ru,category-gov-ru,category-ru-non-ru,category-ads-ru"
 
       - name: Generate GeoIP file
         run: |
@@ -183,6 +221,7 @@ jobs:
           - `category-ru` - российские домены
           - `category-gov-ru` - российские государственные домены
           - `category-ru-non-ru` - российские сервисы вне `.ru/.su/.рф`, поддерживаемые вручную
+          - `category-ads-ru` - канонический российский adblock-список для direct-ветки клиентов
           
           ### GeoIP
           - `private` - частные IP-адреса
@@ -194,6 +233,7 @@ jobs:
           - GeoSite base: [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)
           - `ru-blocked`: [runetfreedom/russia-blocked-geosite](https://github.com/runetfreedom/russia-blocked-geosite)
           - `category-ru-non-ru`: [proxykeys/filter](https://github.com/proxykeys/filter)
+          - `category-ads-ru`: [proxykeys/filter/release/canonical-ru-ads.txt](https://github.com/proxykeys/filter)
           - Обрезка итоговых файлов: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
           EOF
 
