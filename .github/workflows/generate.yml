@@ -239,6 +239,18 @@ jobs:
           - Обрезка итоговых файлов: [xray-geodata-cut](https://github.com/yichya/xray-geodata-cut)
           EOF
 
+      - name: Push .dat files to "release" branch
+        run: |
+          cd release
+          git init
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b release
+          git add geosite.dat geoip.dat sha256sum.txt note.md
+          git commit -m "Release ${{ env.TAG_NAME || 'update' }}"
+          git remote add origin "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git push -f -u origin release
+
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.DATFILTER }}
@@ -264,3 +276,9 @@ jobs:
               --notes-file release/note.md \
               --target "${GITHUB_SHA}"
           fi
+          
+      - name: Purge jsDelivr cache
+        run: |
+          sleep 5
+          echo "Purging jsDelivr cache..."
+          curl -sS "https://purge.jsdelivr.net/gh/proxykeys/datfilter@release" | python3 -m json.tool || true
