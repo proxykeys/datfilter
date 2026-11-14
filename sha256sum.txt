@@ -1,0 +1,2 @@
+a14ae6c4d6da1f92e757756e58a94aa3d1cdd6b81967c75664b7c87de9dbdf83  geosite.dat
+d619dfb33af4e4210fccab822bae8724771b6e63e335ca759aee50ab4e215cfd  geoip.dat
